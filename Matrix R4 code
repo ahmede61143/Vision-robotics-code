@@ -1,0 +1,65 @@
+#include <MatrixMini.h>
+#include <WiFi.h>
+#include <Wire.h>
+
+const char* ssid = "Not showen for privecy reasons";
+const char* password = "Not showen for privecy reasons";
+WiFiUDP udp;
+
+enum State { IDLE, MOVE_10CM, LOCAL_SEARCH, FINISHED };
+State robotState = IDLE;
+
+void setup() {
+  Mini.begin();
+  Mini.imu.begin();
+  Wire.begin(); 
+  
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) delay(500);
+  udp.begin(4210);
+  delay(2000); // Calibration time
+}
+
+void loop() {
+  switch (robotState) {
+    case IDLE:
+      if (udp.parsePacket() && udp.read() == 'F') robotState = MOVE_10CM;
+      break;
+
+    case MOVE_10CM:
+      driveStraight(50, 1200); // Uses built-in Gyro
+      robotState = LOCAL_SEARCH;
+      break;
+
+    case LOCAL_SEARCH:
+      Wire.requestFrom(0x12, 2);
+      if (Wire.available() >= 2) {
+        int cx = (Wire.read() << 8) | Wire.read();
+        if (cx == 0) return; 
+        
+        if (cx < 140) { // Steer Left
+          Mini.M1.set(30); Mini.M2.set(30); Mini.M3.set(50); Mini.M4.set(50);
+        } else if (cx > 180) { // Steer Right
+          Mini.M1.set(50); Mini.M2.set(50); Mini.M3.set(30); Mini.M4.set(30);
+        } else { // Centered
+          robotState = FINISHED;
+        }
+      }
+      break;
+
+    case FINISHED:
+      Mini.M1.set(0); Mini.M2.set(0); Mini.M3.set(0); Mini.M4.set(0);
+      break;
+  }
+}
+
+void driveStraight(int speed, int duration) {
+  long start = millis();
+  float target = Mini.imu.getAngleZ();
+  while (millis() - start < duration) {
+    float error = target - Mini.imu.getAngleZ();
+    int corr = (int)(error * 2.5);
+    Mini.M1.set(speed + corr); Mini.M2.set(speed + corr);
+    Mini.M3.set(speed - corr); Mini.M4.set(speed - corr);
+  }
+}
