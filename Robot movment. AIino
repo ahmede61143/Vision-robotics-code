@@ -1,0 +1,75 @@
+#include <MatrixMini.h>
+#include <WiFi.h>
+#include <Wire.h>
+
+const char* ssid = "Your_SSID";
+const char* password = "Your_Password";
+WiFiUDP udp;
+
+enum State { IDLE, LOCAL_SEARCH, GRAB, FINISHED };
+State robotState = IDLE;
+
+void setup() {
+  Mini.begin();
+  Mini.imu.begin();
+  Wire.begin(); 
+  WiFi.begin(ssid, password);
+  udp.begin(4210);
+  
+  Mini.S1.set(0); // Open Servo
+}
+
+void loop() {
+  char packetBuffer[255];
+  int packetSize = udp.parsePacket();
+  
+  if (packetSize) {
+    int len = udp.read(packetBuffer, 255);
+    if (len > 0) packetBuffer[len] = 0;
+    if (strcmp(packetBuffer, "SEARCH") == 0) {
+      robotState = LOCAL_SEARCH;
+    }
+  }
+
+  switch (robotState) {
+    case LOCAL_SEARCH:
+      Wire.requestFrom(0x12, 2); // M-Vision I2C Address
+      if (Wire.available() >= 2) {
+        int cx = (Wire.read() << 8) | Wire.read();
+        
+        if (cx == 0) {
+          driveStraight(20, 100); // Slowly creep forward if lost
+        } else if (cx < 140) {
+          Mini.M1.set(10); Mini.M3.set(30); // Turn Left
+        } else if (cx > 180) {
+          Mini.M1.set(30); Mini.M3.set(10); // Turn Right
+        } else {
+          robotState = GRAB; // Centered!
+        }
+      }
+      break;
+
+    case GRAB:
+      stopMotors();
+      // Artifact pickup sequence
+      for(int pos = 0; pos <= 180; pos += 5) {
+        Mini.S1.set(pos); // Spin servo to scoop/grab
+        delay(20);
+      }
+      robotState = FINISHED;
+      break;
+
+    case FINISHED:
+      stopMotors();
+      break;
+  }
+}
+
+void stopMotors() {
+  Mini.M1.set(0); Mini.M2.set(0); Mini.M3.set(0); Mini.M4.set(0);
+}
+
+void driveStraight(int speed, int duration) {
+  Mini.M1.set(speed); Mini.M2.set(speed);
+  Mini.M3.set(speed); Mini.M4.set(speed);
+}
